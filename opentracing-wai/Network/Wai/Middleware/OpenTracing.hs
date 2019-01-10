@@ -6,6 +6,7 @@
 module Network.Wai.Middleware.OpenTracing
     ( TracedApplication
     , opentracing
+    , opentracingSpanName
     )
 where
 
@@ -29,10 +30,20 @@ opentracing
     -> Propagation        p
     -> TracedApplication
     -> Application
-opentracing t p app req respond = do
+opentracing = opentracingSpanName makeName
+  where
+    makeName req = Text.intercalate "/" (pathInfo req)
+
+opentracingSpanName
+    :: HasCarrier Headers p
+    => (Request -> Text.Text)
+    -> Tracer
+    -> Propagation        p
+    -> TracedApplication
+    -> Application
+opentracingSpanName makeName t p app req respond = do
     let ctx = Propagation.extract p (requestHeaders req)
-    let opt = let name = Text.intercalate "/" (pathInfo req)
-                  refs = (\x -> set refPropagated x mempty)
+    let opt = let refs = (\x -> set refPropagated x mempty)
                        . maybeToList . fmap ChildOf $ ctx
                in set spanOptSampled (view ctxSampled <$> ctx)
                 . set spanOptTags
@@ -41,7 +52,7 @@ opentracing t p app req respond = do
                       , PeerAddress (Text.pack (show (remoteHost req))) -- not so great
                       , SpanKind    RPCServer
                       ]
-                $ spanOpts name refs
+                $ spanOpts (makeName req) refs
 
     Tracer.traced_ t opt $ \span -> app span req $ \res -> do
         modifyActiveSpan span $
